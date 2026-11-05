@@ -11,12 +11,18 @@ import json
 import os
 import secrets
 import sqlite3
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import streamlit as st
 
 DB_PATH = Path(os.environ.get("FAMILY_CALENDAR_DB", str(Path(__file__).with_name("family_calendar.sqlite3"))))
+def now_korea():
+    return datetime.now(timezone(timedelta(hours=9)))
+
+def today_korea():
+    return now_korea().date()
+
 COLORS = {"파랑": "#2563eb", "초록": "#15803d", "주황": "#c2410c", "보라": "#7e22ce", "분홍": "#be185d"}
 
 def connect():
@@ -125,7 +131,7 @@ def validate_event(title, owner, start, end, clock, note, color):
 
 def save_event(room, author, values, event_id=None):
     checked = validate_event(*values)
-    now = datetime.now().isoformat(timespec="seconds")
+    now = now_korea().isoformat(timespec="seconds")
     with connect() as con:
         if event_id is None:
             con.execute("INSERT INTO events(room,title,owner,start,end,clock,note,color,author,updated) VALUES(?,?,?,?,?,?,?,?,?,?)", (room,*checked,author,now))
@@ -143,7 +149,7 @@ def add_message(room, author, body):
     if not body or len(body)>1000:
         raise ValueError("대화는 1~1,000자로 입력해 주세요.")
     with connect() as con:
-        con.execute("INSERT INTO messages(room,author,body,created) VALUES(?,?,?,?)", (room,author,body,datetime.now().isoformat(timespec="seconds")))
+        con.execute("INSERT INTO messages(room,author,body,created) VALUES(?,?,?,?)", (room,author,body,now_korea().isoformat(timespec="seconds")))
 
 def backup_room(room):
     with connect() as con:
@@ -178,7 +184,7 @@ def restore_room(room, payload):
         con.executemany("INSERT INTO messages(room,author,body,created) VALUES(?,?,?,?)",msgs)
 
 def draw_calendar(year, month, events):
-    today = date.today()
+    today = today_korea()
     cells = ['<div class="cal">']
     for label in ["월","화","수","목","금","토","일"]:
         cells.append(f'<div class="weekday">{label}</div>')
@@ -202,8 +208,8 @@ def event_form(room, name, existing=None):
         title = st.text_input("일정 제목",value=e.get("title",""),max_chars=80,placeholder="예: 할머니 생신 식사")
         owner = st.text_input("누구의 일정인가요?",value=e.get("owner",name),max_chars=30,help="개인 이름 또는 '가족 전체'라고 적어 주세요.")
         a,b = st.columns(2)
-        start = a.date_input("시작하는 날",value=date.fromisoformat(e["start"]) if existing else st.session_state.get("selected_day",date.today()),format="YYYY/MM/DD")
-        end = b.date_input("끝나는 날",value=date.fromisoformat(e["end"]) if existing else st.session_state.get("selected_day",date.today()),format="YYYY/MM/DD")
+        start = a.date_input("시작하는 날",value=date.fromisoformat(e["start"]) if existing else st.session_state.get("selected_day",today_korea()),format="YYYY/MM/DD")
+        end = b.date_input("끝나는 날",value=date.fromisoformat(e["end"]) if existing else st.session_state.get("selected_day",today_korea()),format="YYYY/MM/DD")
         all_day = st.checkbox("시간 없이 하루 일정",value=not bool(e.get("clock")))
         clock = st.time_input("약속 시간 (하루 일정이면 무시해요)",value=datetime.strptime(e.get("clock") or "09:00","%H:%M").time(),step=300)
         color = st.selectbox("표시 색상",list(COLORS),index=list(COLORS).index(e.get("color","파랑")))
@@ -303,7 +309,7 @@ def main():
         if st.button("🔄 최신 일정 불러오기"):
             st.rerun()
         events = events_for(room)
-        today = date.today()
+        today = today_korea()
         c1,c2 = st.columns(2)
         year = c1.number_input("연도",min_value=1900,max_value=2200,value=today.year,step=1)
         month = c2.selectbox("월",list(range(1,13)),index=today.month-1,format_func=lambda x:f"{x}월")
@@ -345,7 +351,7 @@ def main():
     with tab3:
         st.subheader("가족 기록 보관하기")
         st.warning("무료 호스팅에서는 서버 재시작·재배포 시 일정과 대화가 사라질 수 있어요. 장기 운영에는 외부 데이터베이스 연동이 필요해요.")
-        st.download_button("일정과 대화 백업 내려받기",backup_room(room),file_name=f"family_backup_{date.today().isoformat()}.json",mime="application/json")
+        st.download_button("일정과 대화 백업 내려받기",backup_room(room),file_name=f"family_backup_{today_korea().isoformat()}.json",mime="application/json")
         st.caption("백업에는 이 가족방의 전체 일정과 대화가 들어 있어요. 가족 코드는 포함되지 않아요. 안전한 곳에 보관하세요.")
         uploaded = st.file_uploader("백업 파일 불러오기",type=["json"])
         confirm = st.checkbox("복원하면 현재 가족방의 일정과 대화가 백업 내용으로 모두 바뀐다는 것을 확인했어요.")
@@ -362,7 +368,7 @@ def main():
         st.divider()
         st.write("사용 순서: 한 사람이 ‘새 가족방 만들기’를 체크해 10자리 코드를 자동 입력한 뒤 입장 → 가족에게 앱 주소와 발급된 코드 전달 → 각자 이름과 같은 코드로 입장")
         st.write("달력은 ‘최신 일정 불러오기’로 갱신하고, 대화는 화면이 열린 동안 약 5초 간격으로 갱신해요. 최근 대화 150개를 표시하며 전체 대화는 백업에 포함돼요.")
-        st.caption("앱은 실행 서버의 날짜·시간을 사용해요. 해외 서버라면 한국 시간과 차이가 날 수 있어요. 가족 코드를 잊으면 코드 찾기 기능은 없어요.")
+        st.caption("앱의 날짜와 시간은 한국 시간을 기준으로 표시해요. 가족 코드를 잊으면 코드 찾기 기능은 없어요.")
 
 if __name__ == "__main__":
     main()
